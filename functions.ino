@@ -105,6 +105,10 @@ void startAdvertising(void) // This function sets up and starts Bluetooth advert
 
 void scroll_android(int16_t x, int16_t y, bool tipTouch) // This function sends a touchpad HID report for Android devices, simulating touchpad scrolling.
 {
+#ifdef MAC_MODE
+  (void)x; (void)y; (void)tipTouch;  // macOS ignores digitizer reports, so don't waste BLE bandwidth on them. The caller's touch state machine still runs, it just goes nowhere.
+  return;
+#else
   uint8_t report[] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }; // Initialize a blank HID report
   report[0] = tipTouch ? 0x03 : 0x00;  // Set the touch state (clicked or not clicked)
   uint8_t pressure = 50; // Placeholder for pressure value
@@ -116,16 +120,48 @@ void scroll_android(int16_t x, int16_t y, bool tipTouch) // This function sends 
   report[5] = y & 0xff; // Set the lower byte of the y-coordinate
   report[6] = (y >> 8) & 0xff;// Set the upper byte of the y-coordinate
   blehid.inputReport(0x01, report, sizeof(report)); // Send the HID report for Android with report ID 2
+#endif
 }
 
 void scroll_PC(int16_t input)  // This function sends a HID report for PC devices, simulating the Microsoft Surface Dial scrolling.
 {
+#ifdef MAC_MODE
+  (void)input;  // macOS has no radial controller driver, so the dial report is dead weight here
+  return;
+#else
   input = PC_scroll_scale * (input - scroll_base_distance); // Adjust the input by scaling and offsetting based on base distance
   uint8_t report[] = { 0x00, 0x00, 0x00, 0x00, 0x00 };  // Initialize a blank HID report
   report[0] = 0;  // No button click
   report[1] = input & 0xFF;  // Set the lower byte of the input
   report[2] = (input >> 8) & 0xFF;  // Set the upper byte of the input
   blehid.inputReport(0x03, report, sizeof(report)); // Send the HID report for PC with report ID 3
+#endif
+}
+
+void scroll_mouse(double distance)  // Sends a standard HID mouse wheel report (report ID 2), which macOS and Linux accept with no driver.
+{
+#ifdef MAC_MODE
+  static double wheelRemainder = 0;  // Carries sub-detent motion between ticks. Without this, a slow scroll rounds to zero every tick and the wheel never moves.
+
+  wheelRemainder += distance * mac_scroll_scale * (mac_scroll_invert ? -1 : 1);
+
+  int steps = (int)wheelRemainder;  // Truncates toward zero, so the sign survives
+  if (steps == 0) {
+    return;
+  }
+  if (steps > 127) {
+    steps = 127;   // Clamp before subtracting, so anything over the limit stays in the remainder
+  } else if (steps < -127) {
+    steps = -127;
+  }
+  wheelRemainder -= steps;
+
+  uint8_t report[4] = { 0x00, 0x00, 0x00, 0x00 };  // buttons, X, Y, wheel
+  report[3] = (uint8_t)(int8_t)steps;
+  blehid.inputReport(0x02, report, sizeof(report));
+#else
+  (void)distance;
+#endif
 }
 
 void clickMouseButton(uint8_t buttonNumber, bool isPressed) // This function sends a HID report to simulate mouse button clicks.

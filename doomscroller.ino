@@ -17,6 +17,12 @@ double scroll_acc = 50;           //between 10-100 if you want acceleration boos
 ///// PC user adjustable paramters - speed responses
 double PC_scroll_scale = 0.25;  //Scroll speed gain factor for PC dial driver. This scales down the default android calculations.
 
+///// Mac / Linux mouse wheel mode
+#define MAC_MODE                       // Uncomment to send plain BLE mouse wheel reports instead of Android touch events. macOS and Linux handle these with no driver or helper app.
+//#define MAC_MOUSE_ONLY_DESCRIPTOR  // Fallback for MAC_MODE only. Drops the touchscreen collection from the HID descriptor, in case macOS refuses to bind to a device that also claims to be a digitizer.
+double mac_scroll_scale = 0.01;   // Converts scroll_distance units to wheel detents. Tuned on hardware: the main loop runs about 100 Hz and scrollAverage sits near 15. Raise it to scroll faster.
+bool mac_scroll_invert = true;    // Wheel direction. True matches macOS with "natural scrolling" turned OFF, which is what this was tuned against. Flip it if the page goes the wrong way.
+
 ///// User adjustable paramters - speed responses
 int idleCountThreshold = 30;  // seconds until idle mode starts
 const char* deviceName = "Doomscroller239";  //bluetooth device name
@@ -75,6 +81,7 @@ int click_ypos; // Y position when a click action is detected
 //HID descriptor to define USB device type.
 uint8_t hid_report_descriptor[] PROGMEM = {
 
+#ifndef MAC_MOUSE_ONLY_DESCRIPTOR
   // begin Android Touchpad HID descriptor
   0x05, 0x0d, /* USAGE_PAGE (Digitizer) */
   0x09, 0x04, /* USAGE (Touch Screen) */
@@ -137,6 +144,7 @@ uint8_t hid_report_descriptor[] PROGMEM = {
 
   /* End of touchscreen application collection */
   0xc0, /* END_COLLECTION */
+#endif
 
 
 
@@ -226,6 +234,12 @@ MagAlpha magAlpha; // Initialize an instance of MagAlpha, likely a magnetic posi
 void acquireAndProcessAngle(); // Declaration of a function to acquire and process angle data
 
 
+void connect_callback(uint16_t conn_handle)
+{
+  (void) conn_handle;
+  resumeLoop();  // setup() parks the loop after 10s with no connection, and nothing else ever restarts it
+}
+
 void setup() {
   Serial.begin(UART_BAUDRATE); // Initialize serial communication at a baud rate defined by UART_BAUDRATE
   delay(200); // Short delay to ensure serial communication is established
@@ -244,6 +258,7 @@ void setup() {
   blehid.setReportLen(input_report_lengths, NULL, NULL); // Set the report lengths for input, output, and feature reports
   blehid.begin(); // Initialize the BLE HID service
   Bluefruit.Periph.setConnInterval(9, 16);  // Set the connection interval range (8 can be unstable, so it's the minimum). Devices try to negociate to a lower rate (increased latency)
+  Bluefruit.Periph.setConnectCallback(connect_callback); // Must be registered before the wait loop below, so a late connection can revive a suspended loop
   startAdvertising(); // Start BLE advertising to make the device discoverable
 
 
@@ -358,6 +373,7 @@ void loop() {
       y_pos += scrollAverage;  // y_pos is the vertical location of the cursor
       scroll_android(x_start, y_pos, true); //calls scroll event to be transmitted through HID report
       scroll_PC(-scrollAverage); //calls scroll event to be transmitted through HID report
+      scroll_mouse(-scrollAverage); //plain mouse wheel report. Does nothing unless MAC_MODE is defined
       isClicked = true;
       delay(scroll_time);
       isIdle = false;
@@ -400,6 +416,7 @@ void loop() {
       y_pos -= scrollAverage;
       scroll_android(x_start, y_pos, true); //click mouse
       scroll_PC(scrollAverage);
+      scroll_mouse(scrollAverage); //plain mouse wheel report. Does nothing unless MAC_MODE is defined
       delay(scroll_time);
       isClicked = true;
     }
